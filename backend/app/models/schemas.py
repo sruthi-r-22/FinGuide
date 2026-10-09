@@ -23,9 +23,14 @@ class SourceCitation(BaseModel):
     provenance_note: Optional[str] = None
     relevance_score: Optional[float] = None
 
+class OfficialSourceRef(BaseModel):
+    title: str
+    url: str
+
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceCitation]
+    further_reading: List[OfficialSourceRef] = Field(default_factory=list)
     follow_up_questions: List[str]
     is_grounded: bool
     has_warning: bool = False
@@ -87,10 +92,6 @@ class ScamAnalyzeResponse(BaseModel):
 class ComparisonRow(BaseModel):
     feature: str
     values: List[str]
-
-class OfficialSourceRef(BaseModel):
-    title: str
-    url: str
 
 class ComparisonResponse(BaseModel):
     topic: str

@@ -62,6 +62,40 @@ def demo_chunk(text, score=0.8):
     }
 
 
+def official_chunks_for(url, terms):
+    chunks = ingest.load_all_document_chunks()
+    candidates = [
+        {**chunk, "score": 0.9}
+        for chunk in chunks
+        if chunk["metadata"].get("source_url") == url
+    ]
+    matches = [
+        chunk for chunk in candidates
+        if all(term in chunk["text"].lower() for term in terms)
+    ]
+    if matches:
+        return matches
+
+    anchors = [
+        chunk for chunk in candidates
+        if "unified payments interface (upi)" in chunk["text"].lower()
+    ]
+    for anchor in anchors:
+        chunk_id = anchor["id"]
+        id_parts = chunk_id.rsplit(":c", 1)
+        if len(id_parts) != 2 or not id_parts[1].isdigit():
+            continue
+        next_id = f"{id_parts[0]}:c{int(id_parts[1]) + 1}"
+        row_chunks = [
+            chunk for chunk in candidates
+            if chunk["id"] in (chunk_id, next_id)
+        ]
+        row_text = " ".join(chunk["text"].lower() for chunk in row_chunks)
+        if row_chunks and all(term in row_text for term in terms):
+            return row_chunks
+    return []
+
+
 def test_squared_l2_distance_maps_to_cosine_for_normalized_vectors():
     assert cosine_similarity_from_squared_l2(0.8906185) == pytest.approx(0.55469075)
 
@@ -70,7 +104,17 @@ def test_registered_demo_chunks_have_no_asserted_official_provenance():
     chunks = ingest.load_all_document_chunks()
 
     assert chunks
-    for chunk in chunks:
+    demo_chunks = [
+        chunk for chunk in chunks
+        if chunk["metadata"]["content_type"] == "generated_demo"
+    ]
+    official_chunks = [
+        chunk for chunk in chunks
+        if chunk["metadata"]["content_type"] == "official_document"
+    ]
+    assert demo_chunks
+    assert official_chunks
+    for chunk in demo_chunks:
         metadata = chunk["metadata"]
         assert metadata["document_id"].startswith("sha256:")
         assert metadata["document_title"].startswith("FinGuide AI educational demo")
@@ -82,6 +126,11 @@ def test_registered_demo_chunks_have_no_asserted_official_provenance():
         assert "authority" not in metadata
         assert "last_verified" not in metadata
         assert "source_url" not in metadata
+    for chunk in official_chunks:
+        metadata = chunk["metadata"]
+        assert metadata["reference_status"] == "verified"
+        assert metadata["publisher"] == "Reserve Bank of India"
+        assert metadata["source_url"].startswith("https://www.rbi.org.in/")
 
 
 def test_unknown_pdf_metadata_is_not_invented(monkeypatch, tmp_path):
@@ -183,18 +232,21 @@ def test_source_manifest_rejects_non_authoritative_host(monkeypatch, tmp_path):
         ingest._official_metadata_for_pdf(str(pdf_path))
 
 
-def test_verified_source_supports_upi_safety_answer_without_paid_api(monkeypatch):
+def test_rbi_customer_protection_source_supports_upi_credential_safety(monkeypatch):
     monkeypatch.setattr(generator.settings, "GEMINI_API_KEY", "")
-    chunk = verified_upi_chunk()
+    url = "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11040"
+    chunks = official_chunks_for(url, ["payment credentials"])
 
-    response = generate_grounded_answer("How should I protect my UPI PIN?", [chunk])
+    response = generate_grounded_answer(
+        "Do I need to enter my UPI PIN to receive money?", chunks
+    )
 
     assert response.is_grounded is True
     assert response.has_warning is False
-    assert "Never share your UPI PIN with anyone." in response.answer
+    assert "does not specifically say whether a PIN is needed" in response.answer
     assert len(response.sources) == 1
-    assert response.sources[0].document_id == chunk["metadata"]["document_id"]
-    assert response.sources[0].page_number == 1
+    assert response.sources[0].source_url == url
+    assert response.sources[0].page_number == 3
     assert response.sources[0].reference_status == "verified"
 
 
@@ -223,7 +275,7 @@ def test_llm_prompt_uses_verified_context_and_rejects_fabricated_citations(monke
     monkeypatch.setitem(sys.modules, "google.generativeai", genai_module)
     monkeypatch.setattr(generator.settings, "GEMINI_API_KEY", "test-key")
 
-    response = generate_grounded_answer("How do I protect my UPI PIN?", [chunk])
+    response = generate_grounded_answer("Summarize the official excerpt.", [chunk])
 
     assert response.is_grounded is True
     assert response.answer.endswith("[sha256:" + ("a" * 64) + ":p1]")
@@ -236,7 +288,7 @@ def test_llm_prompt_uses_verified_context_and_rejects_fabricated_citations(monke
         )
     )
     fallback_response = generate_grounded_answer(
-        "How do I protect my UPI PIN?", [chunk]
+        "Summarize the official excerpt.", [chunk]
     )
     assert "fabricated claim" not in fallback_response.answer
     assert "Never share your UPI PIN with anyone." in fallback_response.answer
@@ -278,21 +330,34 @@ def test_unverified_demo_is_not_labelled_official_or_linked():
 
 def test_unverified_refund_deadline_is_never_repeated_as_a_claim(monkeypatch):
     monkeypatch.setattr(generator.settings, "GEMINI_API_KEY", "")
-    chunk = demo_chunk(
+    demo = demo_chunk(
         "Failed UPI payments are automatically refunded within T+1 working days."
+    )
+    official = official_chunks_for(
+        "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11693",
+        [
+            "unified payments interface (upi)",
+            "account debited",
+            "t + 1 day",
+            "t + 5 days",
+        ],
     )
 
     response = generate_grounded_answer(
         "Is a failed UPI payment guaranteed to be refunded within T+1 working days?",
-        [chunk],
+        official + [demo],
     )
 
-    assert response.is_grounded is False
-    assert response.has_warning is True
-    assert "could not verify" in response.answer.lower()
-    assert "t+1" not in response.answer.lower()
-    assert response.sources[0].snippet == ""
-    assert response.sources[0].source_url is None
+    assert response.is_grounded is True
+    assert response.has_warning is False
+    assert "t + 1 day" in response.answer.lower()
+    assert "t + 5 days" in response.answer.lower()
+    assert "universal refund guarantee" in response.answer.lower()
+    assert len(response.sources) == 1
+    assert response.sources[0].source_url == (
+        "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11693"
+    )
+    assert response.sources[0].content_type == "official_document"
 
 
 def test_irrelevant_chunk_below_threshold_cannot_ground_answer(monkeypatch):
@@ -325,6 +390,127 @@ def test_missing_authoritative_evidence_returns_uncertainty(monkeypatch):
     assert "could not verify" in response.answer.lower()
     assert response.sources == []
 
+def test_upi_pin_without_official_evidence_keeps_uncertainty_warning():
+    response = generate_grounded_answer(
+        "Do I need to enter a UPI PIN to receive money?",
+        [],
+    )
+
+    assert response.is_grounded is False
+    assert response.has_warning is True
+    assert response.sources == []
+    assert response.further_reading == []
+    assert "could not verify" in response.answer.lower()
+
+def test_general_upi_safety_question_gets_supplementary_reference():
+    response = generate_grounded_answer(
+        "How do I stay safe with UPI payments?",
+        [],
+    )
+
+    assert response.has_warning is True
+    assert response.further_reading == []
+
+
+def test_collect_answer_does_not_claim_inaccessible_npci_evidence():
+    response = generate_grounded_answer(
+        "Should I approve a UPI collect request to receive money?",
+        [],
+    )
+
+    assert response.is_grounded is False
+    assert response.has_warning is True
+    assert response.sources == []
+    assert response.further_reading == []
+    assert "could not verify" in response.answer.lower()
+
+
+def test_failed_transaction_answer_cites_retrieved_rbi_circular():
+    url = "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11693"
+    chunks = official_chunks_for(
+        url,
+        [
+            "unified payments interface (upi)",
+            "account debited",
+            "t + 1 day",
+            "t + 5 days",
+        ],
+    )
+    response = generate_grounded_answer(
+        "What should I do if a failed UPI transaction has deducted money?",
+        chunks,
+    )
+
+    assert response.is_grounded is True
+    assert response.has_warning is False
+    assert "T + 1 day" in response.answer
+    assert "T + 5 days" in response.answer
+    assert len(response.sources) == 1
+    assert response.sources[0].source_url == url
+    assert response.sources[0].page_number == 4
+    assert response.further_reading == []
+
+def test_curated_demo_questions_produce_distinct_cautious_answers_and_links():
+    cases = [
+        (
+            "Do I need to enter my UPI PIN to receive money?",
+            "UPI PIN safety when receiving money",
+            [],
+        ),
+        (
+            "How should I handle an unexpected UPI collect or cashback request?",
+            "Unexpected UPI collect or cashback request",
+            [demo_chunk("Generated demo excerpt.")],
+        ),
+        (
+            "What should I do if a failed UPI transaction has deducted money?",
+            "Failed UPI payment with a debit",
+            official_chunks_for(
+                "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11693",
+                [
+                    "unified payments interface (upi)",
+                    "account debited",
+                    "t + 1 day",
+                    "t + 5 days",
+                ],
+            ),
+        ),
+    ]
+    responses = [
+        generate_grounded_answer(question, chunks)
+        for question, _, chunks in cases
+    ]
+
+    assert len({response.answer for response in responses}) == len(cases)
+    for response, (_, answer_heading, chunks) in zip(responses, cases):
+        assert answer_heading in response.answer
+        if chunks and chunks[0].get("metadata", {}).get("reference_status") == "unverified":
+            assert response.is_grounded is False
+            assert response.has_warning is True
+            assert "could not verify" in response.answer.lower()
+            assert response.further_reading == []
+        elif chunks:
+            assert response.is_grounded is True
+            assert response.has_warning is False
+            assert response.sources
+            assert response.sources[0].source_url == chunks[0]["metadata"]["source_url"]
+        else:
+            assert response.is_grounded is False
+            assert response.has_warning is True
+            assert "could not verify" in response.answer.lower()
+
+
+def test_official_retrieved_answer_does_not_add_demo_further_reading():
+    chunk = verified_upi_chunk("Do not share payment credentials.")
+
+    response = generate_grounded_answer(
+        "Summarize this verified excerpt.",
+        [chunk],
+    )
+
+    assert response.is_grounded is True
+    assert response.further_reading == []
+
 
 def test_citations_match_verified_retrieved_source_and_page():
     chunk = verified_upi_chunk("Never share your UPI PIN with anyone.")
@@ -332,11 +518,45 @@ def test_citations_match_verified_retrieved_source_and_page():
     citations = build_citations([chunk])
 
     assert len(citations) == 1
+    assert citations[0].document_title == chunk["metadata"]["document_title"]
     assert citations[0].document_id == chunk["metadata"]["document_id"]
     assert citations[0].page_number == chunk["metadata"]["page_number"]
     assert citations[0].source_url == chunk["metadata"]["source_url"]
     assert citations[0].snippet == chunk["text"]
     assert citations[0].publisher == chunk["metadata"]["publisher"]
+    assert citations[0].reference_status == "verified"
+
+
+def test_verified_citation_without_source_url_is_not_presented_as_official():
+    chunk = verified_upi_chunk("Never share your UPI PIN with anyone.")
+    chunk["metadata"].pop("source_url")
+
+    citations = build_citations([chunk])
+
+    assert len(citations) == 1
+    assert citations[0].source_url is None
+    assert citations[0].snippet == ""
+    assert citations[0].reference_status == "unverified"
+    assert citations[0].last_verified is None
+    assert citations[0].document_title.startswith(
+        "FinGuide AI unverified material"
+    )
+    assert "no source URL is present" in citations[0].provenance_note
+
+
+def test_demo_reference_url_is_withheld_with_verification_reason():
+    chunk = demo_chunk("Never share your UPI PIN.")
+    chunk["metadata"]["source_url"] = (
+        "https://www.npci.org.in/what-we-do/upi/faqs"
+    )
+
+    citations = build_citations([chunk])
+
+    assert citations[0].source_url is None
+    assert citations[0].reference_status == "unverified"
+    assert "content_type is generated_demo" in citations[0].provenance_note
+    assert "reference_status is unverified" in citations[0].provenance_note
+    assert "Reference withheld" in citations[0].provenance_note
 
 
 def test_source_metadata_survives_vector_retrieval():
@@ -357,6 +577,7 @@ def test_source_metadata_survives_vector_retrieval():
         @staticmethod
         def query(**kwargs):
             return {
+                "ids": [["verified:page:1"]],
                 "documents": [["Never share your UPI PIN with anyone."]],
                 "metadatas": [[expected_metadata]],
                 "distances": [[0.2]],
@@ -369,6 +590,7 @@ def test_source_metadata_survives_vector_retrieval():
 
     results = manager.retrieve("UPI PIN", top_k=1)
 
+    assert results[0]["id"] == "verified:page:1"
     assert results[0]["metadata"] == expected_metadata
     assert results[0]["metadata"]["page_number"] == 1
     assert results[0]["metadata"]["reference_status"] == "verified"

@@ -43,6 +43,12 @@ def test_chat_sources_metadata():
             assert document["reference_status"] == "unverified"
             assert document["last_verified"] is None
             assert document["source_url"] is None
+            assert "official-source verification failed" in document["provenance_note"]
+            assert "content_type is generated_demo" in document["provenance_note"]
+        elif document["content_type"] == "official_document":
+            assert document["publisher"] == "Reserve Bank of India"
+            assert document["reference_status"] == "verified"
+            assert document["source_url"].startswith("https://www.rbi.org.in/")
 
 
 def test_chat_does_not_treat_demo_as_verified_upi_collect_guidance():
@@ -58,7 +64,28 @@ def test_chat_does_not_treat_demo_as_verified_upi_collect_guidance():
     assert all(source["content_type"] == "generated_demo" for source in data["sources"])
     assert all(source["reference_status"] == "unverified" for source in data["sources"])
     assert all(source["source_url"] is None for source in data["sources"])
+    assert data["further_reading"] == []
     assert "could not verify" in data["answer"].lower()
+
+
+def test_chat_upi_pin_answer_cites_retrieved_rbi_evidence_with_caveat():
+    response = client.post(
+        "/api/chat",
+        json={"question": "Do I need to enter my UPI PIN to receive money?"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_grounded"] is True
+    assert data["has_warning"] is False
+    assert len(data["sources"]) == 1
+    assert data["sources"][0]["source_url"] == (
+        "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11040"
+    )
+    assert data["sources"][0]["page_number"] == 3
+    assert "does not specifically say whether a PIN is needed to receive money" in (
+        data["answer"]
+    )
 
 
 def test_chat_does_not_confirm_demo_failed_transaction_deadline():
@@ -73,8 +100,18 @@ def test_chat_does_not_confirm_demo_failed_transaction_deadline():
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["is_grounded"] is False
-    assert data["has_warning"] is True
-    assert "could not verify" in data["answer"].lower()
-    assert "t+1" not in data["answer"].lower()
-    assert all(source["snippet"] == "" for source in data["sources"])
+    assert data["is_grounded"] is True
+    assert data["has_warning"] is False
+    assert "t + 1 day" in data["answer"].lower()
+    assert "t + 5 days" in data["answer"].lower()
+    assert "universal refund guarantee" in data["answer"].lower()
+    assert data["sources"]
+    assert all(
+        source["source_url"] == (
+            "https://www.rbi.org.in/Scripts/NotificationUser.aspx?Id=11693"
+        )
+        and source["content_type"] == "official_document"
+        and source["reference_status"] == "verified"
+        for source in data["sources"]
+    )
+    assert data["further_reading"] == []

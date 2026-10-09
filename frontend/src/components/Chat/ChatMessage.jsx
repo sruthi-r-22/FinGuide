@@ -76,6 +76,28 @@ export default function ChatMessage({ message, onSelectQuestion }) {
           </div>
         )}
 
+        {message.further_reading && message.further_reading.length > 0 && (
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <div className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2.5">
+              Official further reading (not retrieved RAG citations)
+            </div>
+            <ul className="space-y-1.5 text-sm">
+              {message.further_reading.map((reference) => (
+                <li key={reference.url}>
+                  <a
+                    href={reference.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                  >
+                    {reference.title}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Follow up suggestions */}
         {message.follow_up_questions && message.follow_up_questions.length > 0 && (
           <SuggestedQuestions

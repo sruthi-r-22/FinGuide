@@ -3,10 +3,30 @@ export function isGeneratedDemo(source) {
 }
 
 export function isVerifiedOfficialSource(source) {
-  return !isGeneratedDemo(source)
-    && source?.content_type === 'official_document'
-    && source?.reference_status === 'verified'
-    && source?.verification_method === 'manual_origin_and_sha256_review';
+  if (isGeneratedDemo(source)
+    || source?.content_type !== 'official_document'
+    || source?.reference_status !== 'verified'
+    || source?.verification_method !== 'manual_origin_and_sha256_review'
+    || source?.is_generated_summary !== false) {
+    return false;
+  }
+
+  const publisherHosts = {
+    'Reserve Bank of India': ['rbi.org.in', 'www.rbi.org.in'],
+    'National Payments Corporation of India': ['npci.org.in', 'www.npci.org.in'],
+  };
+  const hosts = publisherHosts[source.publisher];
+  if (!hosts || !source.source_url) return false;
+
+  try {
+    const url = new URL(source.source_url);
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && hosts.includes(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function getSourceTrustLabel(source) {

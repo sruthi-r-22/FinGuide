@@ -7,7 +7,10 @@ from typing import Any
 
 from backend.app.core.config import PROJECT_DIR, resolve_chroma_persist_dir, settings
 from backend.app.rag.embeddings import get_embedding_function
-from backend.app.rag.generator import is_verified_official_metadata
+from backend.app.rag.generator import (
+    is_verified_official_metadata,
+    official_metadata_verification_issues,
+)
 from backend.app.rag.ingest import load_all_document_chunks
 from backend.app.rag.relevance import (
     RETRIEVAL_SCORE_THRESHOLD,
@@ -292,6 +295,7 @@ class VectorStoreManager:
             )
 
             retrieved = []
+            ids = results.get("ids", [[]])[0]
             docs = results.get("documents", [[]])[0]
             metas = results.get("metadatas", [[]])[0]
             distances = results.get("distances", [[]])[0]
@@ -306,6 +310,7 @@ class VectorStoreManager:
                     continue
                 retrieved.append(
                     {
+                        "id": ids[index] if index < len(ids) else None,
                         "text": document,
                         "metadata": metas[index],
                         "score": relevance_score,
@@ -351,8 +356,27 @@ class VectorStoreManager:
             overview = []
             for document in documents.values():
                 document["pages_count"] = len(document.pop("_pages"))
+                document["document_title"] = document["title"]
                 if not is_verified_official_metadata(document, require_page=False):
                     document["source_url"] = None
+                    reasons = "; ".join(
+                        official_metadata_verification_issues(
+                            document, require_page=False
+                        )
+                    )
+                    note = (
+                        "Reference URL withheld because official-source "
+                        f"verification failed: {reasons}."
+                    )
+                    document["provenance_note"] = " ".join(
+                        part
+                        for part in (
+                            document.get("provenance_note"),
+                            note,
+                        )
+                        if part
+                    )
+                document.pop("document_title", None)
                 document.pop("sha256", None)
                 overview.append(document)
             return overview

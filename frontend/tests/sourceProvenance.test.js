@@ -34,12 +34,27 @@ test('a verified label requires the ingestion verification method', () => {
 
 test('verified official metadata receives the official label', () => {
   const source = {
+    publisher: 'National Payments Corporation of India',
+    content_type: 'official_document',
+    reference_status: 'verified',
+    verification_method: 'manual_origin_and_sha256_review',
+    is_generated_summary: false,
+    source_url: 'https://www.npci.org.in/what-we-do/upi/faqs',
+  };
+
+  assert.equal(isVerifiedOfficialSource(source), true);
+  assert.equal(getSourceTrustLabel(source), 'Verified official source');
+});
+
+test('missing source URL cannot receive an official label', () => {
+  const source = {
+    publisher: 'National Payments Corporation of India',
     content_type: 'official_document',
     reference_status: 'verified',
     verification_method: 'manual_origin_and_sha256_review',
     is_generated_summary: false,
   };
 
-  assert.equal(isVerifiedOfficialSource(source), true);
-  assert.equal(getSourceTrustLabel(source), 'Verified official source');
+  assert.equal(isVerifiedOfficialSource(source), false);
+  assert.equal(getSourceTrustLabel(source), 'Unverified source');
 });

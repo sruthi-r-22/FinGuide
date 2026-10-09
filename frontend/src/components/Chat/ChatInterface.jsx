@@ -78,6 +78,7 @@ export default function ChatInterface({ initialQuestion = null }) {
         sender: 'ai',
         text: res.answer,
         sources: res.sources || [],
+        further_reading: res.further_reading || [],
         is_grounded: res.is_grounded,
         has_warning: res.has_warning,
         warning_message: res.warning_message,

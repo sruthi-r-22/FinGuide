@@ -21,7 +21,13 @@ export default function SourceBadge({ source }) {
             {source.document_title || 'Unknown source'}
           </span>
           <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${isDemo ? 'bg-amber-100 text-amber-800' : isOfficial ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
-            {isDemo ? 'DEMO' : isOfficial ? 'OFFICIAL' : 'UNKNOWN'}
+            {isDemo
+              ? 'UNVERIFIED DEMO'
+              : isOfficial
+                ? 'OFFICIAL'
+                : source.reference_status === 'unverified'
+                  ? 'UNVERIFIED'
+                  : 'UNKNOWN'}
           </span>
           {source.page_number && (
             <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[10px]">

@@ -40,9 +40,35 @@ async def ask_finguide(request: ChatRequest):
             disclaimer=EDUCATIONAL_DISCLAIMER
         )
 
+    # Give curated topics enough context to retrieve their specific official passage.
+    normalized_query = " ".join(cleaned_query.lower().split())
+    retrieval_query = cleaned_query
+    curated_retrieval = False
+    if "upi" in normalized_query and any(
+        term in normalized_query
+        for term in ("pin", "receive money", "receiving money", "share my pin")
+    ):
+        retrieval_query = (
+            "RBI unauthorized transaction shared payment credentials "
+            "customer negligence report to bank"
+        )
+        curated_retrieval = True
+    elif "upi" in normalized_query and any(
+        term in normalized_query
+        for term in ("failed", "unsuccessful", "not credited", "payment failed")
+    ):
+        retrieval_query += (
+            " RBI UPI account debited beneficiary not credited transfer "
+            "merchant confirmation auto-reversal T + 1 day T + 5 days"
+        )
+        curated_retrieval = True
+
     # Vector retrieval
     try:
-        retrieved_chunks = vector_store.retrieve(cleaned_query, top_k=4)
+        retrieved_chunks = vector_store.retrieve(
+            retrieval_query,
+            top_k=8 if curated_retrieval else 4,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=503,
