@@ -1,0 +1,46 @@
+# Environment variables & secrets
+.env
+*.env
+!.env.example
+
+# Python
+backend/venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Node & Frontend
+frontend/node_modules/
+node_modules/
+frontend/dist/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ChromaDB generated index
+backend/data/chroma_db/
+data/chroma_db/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Root Python virtual environment
+.venv/
+
+# Local database files and backups
+data/
+backend/data/
+
+# Test and tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
